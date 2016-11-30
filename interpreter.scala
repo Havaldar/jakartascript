@@ -1,35 +1,9 @@
-object hw10 extends js.util.JsApp {
-  import js.hw10.ast._
-  import js.hw10._
+object interpreter extends js.util.JsApp {
+  import js.repr.ast._
+  import js.repr._
   import js.util.State
   import scala.util.parsing.input.NoPosition
-  /*
-   * CSCI-UA.0480-003: Homework 10
-   * <Your Name>
-   *
-   * Partner: <Your Partner's Name>
-   * Collaborators: <Any Collaborators>
-   */
-
-  /*
-   * Fill in the appropriate portions above by replacing things delimited
-   * by '<'... '>'.
-   *
-   * Replace the '???' expression with your code in each function.
-   *
-   * Do not make other modifications to this template, such as
-   * - adding "extends App" or "extends Application" to your Lab object,
-   * - adding a "main" method, and
-   * - leaving any failing asserts.
-   *
-   * Your solution will _not_ be graded if it does not compile!!
-   *
-   * This template compiles without error. Before you submit comment out any
-   * code that does not compile or causes a failing assert.  Simply put in a
-   * '???' as needed to get something that compiles without error.
-   *
-   */
-
+  
   /* Type Inference */
 
   // A helper function to check whether a JS type has a function type in it.
