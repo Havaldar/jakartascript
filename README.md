@@ -1,3 +1,3 @@
 # jakartascript
 
-## A lightweight javascript interpreter that ensures type safety while also allowing different parampassing modes.
+A lightweight javascript interpreter that ensures type safety while also allowing different parampassing modes.
