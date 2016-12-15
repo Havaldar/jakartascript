@@ -1,4 +1,4 @@
-package js.hw12
+package js.repr
 
 import org.kiama.output.PrettyPrinter
 import ast._
