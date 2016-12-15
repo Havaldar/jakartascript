@@ -1,4 +1,4 @@
-package js.hw12
+package js.repr
 
 import scala.util.parsing.input.Positional
 import js.util._
