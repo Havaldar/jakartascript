@@ -1,19 +1,167 @@
-object interpreter extends js.util.JsApp {
-  import js.repr.ast._
-  import js.repr._
+object hw12 extends js.util.JsApp {
+  import js.hw12.ast._
+  import js.hw12._
   import js.util.State
   import scala.util.parsing.input.NoPosition
-  
+  /*
+   * CSCI-UA.0480-003: Homework 12
+   * Abhinav Havaldar
+   *
+   * Partner: Rhishab Ranawat
+   * Collaborators: <Any Collaborators>
+   */
+
+  /*
+   * Fill in the appropriate portions above by replacing things delimited
+   * by '<'... '>'.
+   *
+   * Replace the '???' expression with your code in each function.
+   *
+   * Do not make other modifications to this template, such as
+   * - adding "extends App" or "extends Application" to your Lab object,
+   * - adding a "main" method, and
+   * - leaving any failing asserts.
+   *
+   * Your solution will _not_ be graded if it does not compile!!
+   *
+   * This template compiles without error. Before you submit comment out any
+   * code that does not compile or causes a failing assert.  Simply put in a
+   * '???' as needed to get something that compiles without error.
+   *
+   */
+
   /* Type Inference */
 
+  /*
+   * The subtype relation, t1 <: t2
+   */
+  def subtype(t1: Typ, t2: Typ): Boolean = (t1, t2) match {
+    /** SubObj */
+    case (TObj(fts1), TObj(fts2)) =>
+      fts2 forall {
+        case (gj, (mutj, tj)) =>
+          if (fts1.contains(gj)) fts1(gj) match {
+            case (_, ti) if mutj == MConst => subtype(ti, tj)
+            case (muti, ti) if muti == mutj => ti == tj
+            case _ => false
+          }
+          else false
+      }
+    /** SubFun */
+    case (TFunction (ts1, tret1), TFunction (ts2, tret2)) =>
+      subtype(tret1, tret2) && ts1.size == ts2.size && (ts1, ts2).zipped.forall((t1, t2) => subtype(t2, t1))
+
+    /** SubRefl, SubAny */
+    case (t1, t2) =>
+      t1 == t2 || t2 == TAny
+  }
+
+  /*
+   * The join operator
+   */
+  def join(t1: Typ, t2: Typ): Typ = (t1, t2) match {
+    /** JoinObj* */
+    case (TObj(fts1), TObj(fts2)) =>
+      // fts should be the field map of the join of t1 and t2
+      val fts =
+        fts1.foldLeft((Map.empty[Fld, (Mut, Typ)])) {
+          case (fts, (h, (mut_h, t_h))) =>
+            fts2.get(h) match {
+              /** JoinObjNO, JoinObjVar, JoinObjMut_!= */
+              case None => fts
+              case Some((mutp_h, tp_h)) => (mut_h, mutp_h) match {
+                case (MVar, MVar) if tp_h == t_h =>  fts + (h -> (MVar, t_h))
+                case (MConst, MConst) if tp_h == t_h => fts + (h -> (MConst, t_h))
+                case (_, _) => fts + (h -> (MConst, join(t_h, tp_h)))
+              }
+            }
+        }
+      TObj(fts)
+
+    /** JoinFunMeet, JoinFunAny */
+    case (TFunction (ts1, tret1), TFunction (ts2, tret2)) if ts1.size == ts2.size =>
+      // tsopt is an Option value. It should contain the list of parameter types for the join
+      // of t1 and t2 if the join is a function type (rule JoinFunMeet).
+      // If the join is 'Any', then tsopt should be None (rule JoinFunAny).
+      val tsopt = (ts1, ts2).zipped.foldRight(Some(Nil): Option[List[Typ]]) {
+        case ((t1, t2), tsopt) => tsopt match {
+          case Some(ts) =>  {
+            val t = meet(t1, t2)
+            if (t == None) None else Some(ts :+ t.get)
+          }
+          case None => None
+        }
+
+      }
+      if (tsopt == None) TAny else TFunction(tsopt.get, join(tret1, tret2))
+
+    /** JoinBasic_=, JoinAny_1, JoinAny_2, JoinObjFun, JoinFunObj */
+    case _ => if (t1 == t2) t1 else TAny
+  }
+
+  /*
+   * The meet operator
+   */
+  def meet(t1: Typ, t2: Typ): Option[Typ] = (t1, t2) match {
+    case (TObj(fts1), TObj(fts2)) =>
+      // fts_common_opt is an Option value. It should contain the field map with the common
+      // fields of fts1 and fts2 for the resulting meet of t1 and t2 (if the meet exists).
+      // If merging the common fields fails (i.e., the meet does not exist), then
+      // fts_common_opt should be None.
+      val fts_common_opt =
+        fts1.foldLeft((Some(Map.empty): Option[Map[Fld, (Mut, Typ)]])) {
+          case (fts_common_opt, (h, (mut_h, t_h))) =>
+            fts2.get(h) match {
+               /** MeetObjNO, MeetObjVar_=, MeetObjMut_!=, MeetObjConst */
+              case None => fts_common_opt match {
+                case None => None
+                case Some(fts) => Some(fts + (h -> (mut_h, t_h)))
+              }
+              case Some((mutp_h, tp_h)) => fts_common_opt match {
+                case None => None
+                case Some(fts) => (mut_h, mutp_h) match {
+                  case (MVar, MVar) => if (t_h == tp_h) Some(fts + (h -> (MVar, t_h))) else None
+                  case (MConst, MConst) => {
+                    val t = meet(t_h, tp_h)
+                    if (t == None) None else Some(fts + (h -> (MConst, t.get)))
+                  }
+                  case (_, _) => {
+                    val t = meet(t_h, tp_h)
+                    if (t == None) None else Some(fts + (h -> (MVar, t.get)))
+                  }
+                }
+              }
+            }
+        }
+      for {
+        fts_common <- fts_common_opt
+      } yield TObj(fts2 ++ fts_common) // rule MeetObjEmp is implicit here
+
+    /** MeetFunJoin */
+    case (TFunction (ts1, tret1), TFunction (ts2, tret2)) if ts1.size == ts2.size =>
+      val ret = meet(tret1, tret2)
+      if (ret == None) None else Some(TFunction((ts1, ts2).zipped.map((t1, t2) => join(t1, t2)), ret.get))
+
+    /** MeetAny_1 */
+    case (t1, TAny) => Some(t1)
+
+    /** MeetAny_2 */
+    case (TAny, t2) => Some(t2)
+
+    /** MeetBasic_= */
+    case (t1, t2) =>
+      if (t1 == t2) Some(t1) else None
+  }
+
   // A helper function to check whether a JS type has a function type in it.
-  // While this is completely given, this function is worth studying to see
-  // how library functions are used.
   def hasFunctionTyp(t: Typ): Boolean = t match {
     case TFunction(_, _) => true
     case _ => false
   }
 
+  /*
+   * Type inference algorithm
+   */
   def typeInfer(env: Map[String, (Mut, Typ)], e: Expr): Typ = {
     // Some shortcuts for convenience
     def typ(e1: Expr) = typeInfer(env, e1)
@@ -23,51 +171,76 @@ object interpreter extends js.util.JsApp {
       val tgot = typ(e1)
       if (texp == tgot) texp else err(tgot, e1)
     }
+    def checkSubtyp(texp: Typ, e1: Expr): Typ = {
+      val tgot = typ(e1)
+      if (subtype(tgot, texp)) tgot else err(tgot, e1)
+    }
 
+    /* The actual implementation of the type inference rules: */
     e match {
+      /** TypePrint */
       case Print(e1) => typ(e1); TUndefined
 
+      /** TypeNum */
       case Num(_) => TNumber
 
+      /** TypeBool */
       case Bool(_) => TBool
 
+      /** TypeUndefined */
       case Undefined => TUndefined
 
+      /** TypeStr */
       case Str(_) => TString
 
+      /** TypeVar */
       case Var(x) => env(x)._2
 
+      /** TypeDecl */
       case Decl(mut, x, e1, e2) =>
         typeInfer(env + (x -> (mut, typ(e1))), e2)
 
+      /** TypeUMinus */
       case UnOp(UMinus, e1) => typ(e1) match {
-
-      case TNumber => TNumber
+        case TNumber => TNumber
         case tgot => err(tgot, e1)
       }
 
+      /** TypeNot */
       case UnOp(Not, e1) =>
         checkTyp(TBool, e1)
 
+      /** TypeDerefFld */
+      case UnOp(FldDeref(f), e) => typ(e) match {
+        case TObj(tfs) if (tfs contains f) => tfs(f)._2
+        case tgot => err(tgot, e)
+      }
+
       case BinOp(bop, e1, e2) =>
         bop match {
+          /** TypePlusStr, TypeArith(+) */
           case Plus =>
             typ(e1) match {
               case TNumber => checkTyp(TNumber, e2)
               case TString => checkTyp(TString, e2)
               case tgot => err(tgot, e1)
             }
-
+          /** TypeArith (-,*,/) */
           case Minus | Times | Div =>
             checkTyp(TNumber, e1)
             checkTyp(TNumber, e2)
 
-          case Eq | Ne => typ(e1) match {
-            case t1 if !hasFunctionTyp(t1) =>
-              checkTyp(t1, e2); TBool
-            case tgot => err(tgot, e1)
-          }
+          /** TypeEqual */
+          case Eq | Ne =>
+            typ(e1) match {
+              case t1 @ TFunction(_, _) => err(t1, e1)
+              case t1 => typ(e2) match {
+                case t2 @ TFunction(_, _) => err(t2, e2)
+                case t2 => if (join(t1, t2) != TAny) TBool else err(t2, e2)
+              }
+            }
 
+          /** TypeInequal */
           case Lt | Le | Gt | Ge =>
             typ(e1) match {
               case TNumber => checkTyp(TNumber, e2)
@@ -76,29 +249,52 @@ object interpreter extends js.util.JsApp {
             }
             TBool
 
+          /** TypeAndOr */
           case And | Or =>
             checkTyp(TBool, e1)
             checkTyp(TBool, e2)
 
+          /** TypeSeq */
           case Seq =>
             typ(e1); typ(e2)
 
           case Assign =>
             e1 match {
+              /** TypeAssignVar */
               case Var(x) =>
                 env(x) match {
-                  case (MVar, t) => checkTyp(t, e2)
-                  case _ => locerr(e1)
+                  case (MVar, t1) =>
+                    val t2 = typ(e2)
+                    if (subtype(t2, t1)) t2 else err(t2, e2)
+                  case (MConst, t1) => locerr(e1)
                 }
+
+              /** TypeAssignFld */
+              case UnOp(FldDeref(f), e11) =>
+                typ(e11) match {
+                  case TObj(fts) if fts.contains(f) => fts(f) match {
+                    case (MVar, t1) => {
+                      val t2 = typ(e2)
+                      if (subtype(t2, t1)) t2 else err(t2, e2)
+                    }
+                    case _ => locerr(e1)
+                  }
+                  case t1 @ TObj(_) => err(t1, e11)
+                  case _ => locerr(e11)
+                }
+
               case _ => locerr(e1)
             }
         }
 
+      /** TypeIf */
       case If(e1, e2, e3) =>
-        checkTyp(TBool, e1)
-        val t2 = typ(e2)
-        checkTyp(t2, e3)
+        typ(e1) match {
+          case TBool => join(typ(e2), typ(e3))
+          case t => err(t, e1)
+        }
 
+      /** TypeFun, TypeFunAnn, TypeFunRec */
       case Function(p, xs, tann, e1) => {
         // Bind to env1 an environment that extends env with an appropriate binding if
         // the function is potentially recursive.
@@ -118,20 +314,27 @@ object interpreter extends js.util.JsApp {
           case None => TFunction(xs map (_._2), typeInfer(env2, e1))
           case Some(tret) =>
             typeInfer(env2, e1) match {
-              case tbody if tbody == tret =>
+              case tbody if subtype(tbody, tret) =>
                 TFunction(xs map (_._2), tret)
               case tbody => err(tbody, e1)
             }
         }
       }
 
+      /** TypeCall */
       case Call(e1, es) => typ(e1) match {
         case TFunction(txs, tret) if (txs.length == es.length) => {
-          (txs, es).zipped.foreach(checkTyp(_, _))
+          (txs, es).zipped.foreach((tx, e) => {
+              val t = typ(e)
+              if (!subtype(t, tx)) err(t, e)
+          })
           tret
         }
         case tgot => err(tgot, e1)
       }
+
+      /** TypeObj */
+      case Obj(fs) => TObj(fs mapValues { case (mut, e) => (mut, typ(e)) })
 
       case Addr(_) | UnOp(Deref, _) =>
         throw new IllegalArgumentException("Gremlins: Encountered unexpected expression %s.".format(e))
@@ -152,6 +355,11 @@ object interpreter extends js.util.JsApp {
 
   def toStr(v: Val): String = v match {
     case Str(s) => s
+    case _ => throw StuckError(v)
+  }
+
+  def toAddr(v: Val): Addr = v match {
+    case a: Addr => a
     case _ => throw StuckError(v)
   }
 
@@ -181,7 +389,7 @@ object interpreter extends js.util.JsApp {
   }
 
   /*
-   * Substitutions e[er/x]
+   * Substitutions e[er/x] (no changes compared to Homework 11)
    */
   def subst(e: Expr, x: String, er: Expr): Expr = {
     require(closed(er))
@@ -203,27 +411,46 @@ object interpreter extends js.util.JsApp {
       case Function(p, ys, tann, eb) =>
         if (p == Some(x) || (ys exists (_._1 == x))) e
         else Function(p, ys, tann, substX(eb))
+      case Obj(fes) =>
+        Obj(fes mapValues { case (m, e) => (m, substX(e)) })
     }
   }
 
 
   /*
-   * Big-step interpreter.
+   * Big-step interpreter (no changes compared to Homework 11)
    */
   def eval(e: Expr): State[Mem, Val] = {
     require(closed(e), "eval called on non-closed expression:\n" + e.prettyJS)
-    /* Some helper functions for convenience. */
+
+    /* Some helper functions for convenience: */
     def eToNum(e: Expr): State[Mem, Double] =
       for ( v <- eval(e) ) yield toNum(v)
     def eToBool(e: Expr): State[Mem, Boolean] =
        for ( v <- eval(e) ) yield toBool(v)
+    def eToAddr(e: Expr): State[Mem, Addr] =
+       for ( v <- eval(e) ) yield toAddr(v)
+    def readVal(a: Addr): State[Mem, Val] =
+      State read { m: Mem =>
+        m(a) match {
+          case v: Val => v
+          case _ => throw StuckError(e)
+        }
+      }
+    def readObj(a: Addr): State[Mem, Map[String, Val]] =
+      State read { m: Mem =>
+        m(a) match {
+          case ObjVal(fs) => fs
+          case _ => throw StuckError(e)
+        }
+      }
 
+    /* The actual implementation of the evaluation rules: */
     e match {
-
-      // EvalVal
+      /** EvalVal */
       case v: Val => State insert v
 
-      // EvalPrint
+      /** EvalPrint */
       case Print(e) =>
         for {
           v <- eval(e)
@@ -232,117 +459,133 @@ object interpreter extends js.util.JsApp {
           Undefined
         }
 
-      // EvalUMinus
+      /** EvalUMinus */
       case UnOp(UMinus, e1) =>
         for {
           n1 <- eToNum(e1)
         } yield Num(- n1)
 
-      // EvalNot
+      /** EvalNot */
       case UnOp(Not, e1) =>
         for {
-          b1 <- eToBool(e1)
-        } yield Bool(!b1)
+          b <- eToBool(e1)
+        } yield Bool(! b)
 
-      // EvalDerefVar
+      /** EvalDerefVar */
       case UnOp(Deref, a: Addr) =>
-        State read(s => s(a))
+        for { v <- readVal(a) } yield v
 
-      // EvalPlus
+      /** EvalDerefFld */
+      case UnOp(FldDeref(f), e) =>
+        for {
+          a <- eToAddr(e)
+          o <- readObj(a)
+        } yield o(f)
+
+      /** EvalPlusNum, EvalPlusStr */
       case BinOp(Plus, e1, e2) =>
         for {
-          v1 <- eToNum(e1)
-          v2 <- eToNum(e2)
-        } yield Num(v1 + v2)
+          v1 <- eval(e1)
+          v2 <- eval(e2)
+        } yield (v1, v2) match {
+          case (Str(s1), v2) => Str(s1 + toStr(v2))
+          case (v1, Str(s2)) => Str(toStr(v1) + s2)
+          case (v1, v2) => Num(toNum(v1) + toNum(v2))
+        }
 
-      // EvalArith
+      /** EvalArith */
       case BinOp(bop@(Minus|Times|Div), e1, e2) =>
         for {
           n1 <- eToNum(e1)
           n2 <- eToNum(e2)
-        } yield bop match {
+        } yield (bop: @unchecked) match {
           case Minus => Num(n1 - n2)
           case Times => Num(n1 * n2)
           case Div => Num(n1 / n2)
         }
 
-      // EvalAndTrue, EvalAndFalse
+      /** EvalAndTrue, EvalAndFalse */
       case BinOp(And, e1, e2) =>
         for {
           b <- eToBool(e1)
-          v <- if (b) /* EvalAndTrue */ eval(e2)
-               else /* EvalAndFalse */ State.insert[Mem,Val](Bool(b))
+          v <- if (b) eval(e2) else State insert[Mem,Val] (Bool(b))
         } yield v
 
-      // EvalOrTrue, EvalOrFalse
+      /** EvalOrFalse, EvalOrTrue */
       case BinOp(Or, e1, e2) =>
         for {
           b <- eToBool(e1)
-          v <- if (b) State insert[Mem, Val](Bool(b)) else eval(e2)
+          v <- if (b) State insert[Mem,Val] (Bool(b)) else eval(e2)
         } yield v
 
-      // EvalSeq
+      /** EvalSeq */
       case BinOp(Seq, e1, e2) =>
         for {
-          v1 <- eval(e1)
+          _ <- eval(e1)
           v2 <- eval(e2)
         } yield v2
 
-      // EvalAssignVar
+      /** EvalAssignVar */
       case BinOp(Assign, UnOp(Deref, a: Addr), e2) =>
         for {
-          v1 <- eval(e2)
-          v2 <- State write[Mem](_ + (a, v1))
-        } yield v1
+          v2 <- eval(e2)
+          _ <- State write { m: Mem => m + (a -> v2) }
+        } yield v2
 
-      // EvalEqual, EvalInequal*
+      /** EvalAssignFld */
+      case BinOp(Assign, UnOp(FldDeref(f), e1), e2) =>
+        for {
+          a <- eToAddr(e1)
+          v2 <- eval(e2)
+          o <- readObj(a)
+          _ <- State write {m: Mem => m + (a -> ObjVal(o + (f -> v2)))}
+        } yield v2
+
+      /** EvalInequalNum, EvalInequalStr */
       case BinOp(bop@(Eq|Ne|Lt|Gt|Le|Ge), e1, e2) =>
         for {
-          n1 <- eToNum(e1)
-          n2 <- eToNum(e2)
-        } yield bop match {
-          case Eq => Bool(n1 == n2)
-          case Ne => Bool(n1 != n2)
-          case Lt => Bool(n1 < n2)
-          case Gt => Bool(n1 > n2)
-          case Le => Bool(n1 <= n2)
-          case Ge => Bool(n1 >= n2)
+          v1 <- eval(e1)
+          v2 <- eval(e2)
+        } yield (bop: @unchecked) match {
+          case Eq => Bool(v1 == v2)
+          case Ne => Bool(v1 != v2)
+          case Le|Ge|Lt|Gt => Bool(inequalityVal(bop, v1, v2))
         }
 
-      // EvalIfThen, EvalIfElse
+      /** EvalIfThen, EvalIfElse */
       case If(e1, e2, e3) =>
         for {
           b <- eToBool(e1)
           v <- if (b) eval(e2) else eval(e3)
         } yield v
 
-      // EvalConstDecl
+      /** EvalConstDecl */
       case Decl(MConst, x, ed, eb) =>
         for {
           vd <- eval(ed)
           v <- eval(subst(eb, x, vd))
         } yield v
 
-      // EvalVarDecl
+      /** EvalVarDecl */
       case Decl(MVar, x, ed, eb) =>
         for {
           vd <- eval(ed)
-          ns <- Mem.alloc(vd)
-          v <- eval(subst(eb, x, UnOp(Deref, ns)))
+          a <- Mem.alloc(vd)
+          v <- eval(subst(eb, x, UnOp(Deref, a)))
         } yield v
 
-      // EvalCall
+      /** EvalCall */
       case Call(Function(None, Nil, _, eb), Nil) =>
         eval(eb)
 
-      // EvalCallConst
+      /** EvalCallConst */
       case Call(v0@Function(None, (x1, _) :: xs, _, eb), e1 :: es) =>
         for {
           v1 <- eval(e1)
-          v2 <- eval(Call(v0.copy(xs = xs, e=subst(eb, x1, v1)), es))
-        } yield v2
+          v <- eval(Call(v0.copy(xs=xs, e=subst(eb, x1, v1)), es))
+        } yield v
 
-      // EvalCallRec
+      /** EvalCallRec */
       case Call(e0, es) =>
         for {
           v0 <- eval(e0)
@@ -354,6 +597,19 @@ object interpreter extends js.util.JsApp {
               eval(Call(v0, es))
           }
         } yield v
+
+      /** EvalObj */
+      case Obj(fes) =>
+        val state0 = State.insert[Mem, Map[String, Val]](Map.empty)
+        fes.foldLeft(state0) {
+          case (state, (fi, (_, ei))) =>
+            for {
+              fvs <- state
+              vi <- eval(ei)
+            } yield fvs + (fi -> vi)
+        } flatMap {
+          fvs => Mem.alloc(ObjVal(fvs))
+        }
 
       case Var(_) | UnOp(Deref, _) | BinOp(_, _, _) =>
         throw StuckError(e) // this should never happen
@@ -385,6 +641,13 @@ object interpreter extends js.util.JsApp {
     if (debug) {
       println("Parsed expression:")
       println(expr)
+    }
+
+    handle(fail()) {
+      if (typeCheck) {
+        val t = typeInfer(Map.empty, expr)
+        if (debug) println("Inferred type: " + t.pretty)
+      }
     }
 
     handle() {

@@ -1,4 +1,4 @@
-package js.hw10
+package js.hw12
 
 import scala.util.parsing.combinator._
 import scala.util.parsing.combinator.lexical._
@@ -12,9 +12,9 @@ object parse extends JavaTokenParsers {
   
   val reserved: Set[String] =
     Set("undefined", "true", "false", "null",
-        "const", "var", "name", "ref", 
-        "function", "return", "interface",
-        "Bool", "String", "Num", "Undefined", "Null")
+        "const", "var",  
+        "function", "return",
+        "Bool", "String", "Num", "Undefined", "Any")
   
   def stmt: Parser[Expr] =
     rep(basicStmt) ~ opt(lastBasicStmt) ^^
@@ -69,11 +69,11 @@ object parse extends JavaTokenParsers {
     } |
     condExpr
     
-  def leftSideExpr: Parser[Expr] = simpleCallExpr
+  def leftSideExpr: Parser[Expr] = callExpr
 
     
   def condExpr: Parser[Expr] =
-    (orExpr <~ "?") ~ (orExpr <~ ":") ~ orExpr ^^
+    (orExpr <~ "?") ~ (assignExpr <~ ":") ~ assignExpr ^^
     { case e1~e2~e3 => If(e1, e2, e3).setPos(e1.pos) } |
     orExpr
   
@@ -137,15 +137,26 @@ object parse extends JavaTokenParsers {
      
   def unaryExpr: Parser[Expr] =
     positioned(unaryOp ~ primaryExpr ^^ { case uop~e => UnOp(uop, e) }) |
-    simpleCallExpr
-                
+    callExpr
+      
+  def callExpr: Parser[Expr] =
+    positioned(simpleCallExpr ~ opt(rep("." ~> ident ~ rep(callArgs))) ^^ {
+      case e~None => e
+      case e~Some(cs) => (e /: cs) {
+        case (e, f~args) =>
+          ((UnOp(FldDeref(f), e).setPos(e.pos): Expr) /: args) {
+            case (e1, e2) => Call(e1, e2).setPos(e1.pos) 
+          }
+      }
+    })
+    
   def simpleCallExpr: Parser[Expr] =
     positioned("console.log(" ~> assignExpr <~ ")" ^^ { Print(_) }) |  
     positioned(functionExpr ~ rep(callArgs) ^^ 
         { case e1~args => 
           (e1 /: args) { case (e1, e2) => Call(e1, e2).setPos(e1.pos) } })
-  
-   def callArgs: Parser[List[Expr]] =
+        
+  def callArgs: Parser[List[Expr]] =
      "(" ~> rep(assignExpr <~ ",") ~ opt(assignExpr) <~ ")" ^^
        { case es~eopt => es ++ eopt }
     
@@ -171,7 +182,13 @@ object parse extends JavaTokenParsers {
         }
     })
 
-      
+  def fieldDecl: Parser[(String, (Mut, Expr))] =
+    opt(mutability) ~ ident ~ (":" ~> assignExpr) ^^ { 
+      case None~f~e => (f, (MVar, e))
+      case Some(m)~f~e => (f, (m, e))
+    }  
+    
+    
   def primaryExpr: Parser[Expr] = 
     literalExpr |
     positioned(ident ^^ { Var(_) }) |
@@ -189,23 +206,41 @@ object parse extends JavaTokenParsers {
     positioned("false" ^^^ Bool(false)) |
     positioned("undefined" ^^^ Undefined) |
     positioned(floatingPointNumber ^^ { d => Num(d.toDouble) }) |
-    positioned(stringLiteral ^^ (s => Str(s.substring(1, s.length() - 1))))
-  
+    positioned(stringLiteral ^^ (s => Str(s.substring(1, s.length() - 1)))) |
+    objectLiteral
+    
   override def stringLiteral: Parser[String] =
     ("\""+"""([^"\p{Cntrl}\\]|\\[\\'"bfnrt]|\\[0-7]{3}|\\u[a-fA-F0-9]{2}|\\u[a-fA-F0-9]{4})*"""+"\"").r |
     ("\'"+"""([^'\p{Cntrl}\\]|\\[\\'"bfnrt]|\\[0-7]{3}|\\u[a-fA-F0-9]{2}|\\u[a-fA-F0-9]{4})*"""+"\'").r
   
+  def objectLiteral: Parser[Expr] =
+    positioned ("{" ~> rep(fieldDecl <~ ",") ~ opt(fieldDecl) <~ "}" ^^
+        { case fs~fopt => Obj(Map(fs: _*) ++ fopt) }
+    )
+    
     /** Type expressions */    
   def typ: Parser[Typ] =
     functionTyp |
+    objectTyp |
     baseTyp
     
   def baseTyp =
     "Bool" ^^^ TBool |
     "String" ^^^ TString |
     "Num" ^^^ TNumber |
-    "Undefined" ^^^ TUndefined
+    "Undefined" ^^^ TUndefined |
+    "Any" ^^^ TAny |
+    "(" ~> typ <~ ")"
+    
         
+  def objectTyp: Parser[TObj] =
+    "{" ~> typedFieldList <~ "}" ^^ 
+      { case tfs => 
+        val m = (Map[String, (Mut, Typ)]() /: tfs) { case (m, (f, typ)) => m + (f -> typ)}
+        TObj(m) 
+      }
+  
+    
   def functionTyp: Parser[TFunction] =
     argTypList ~ ("=>" ~> typ) ^^
       { case txs~typ => TFunction(txs, typ) }
@@ -223,6 +258,16 @@ object parse extends JavaTokenParsers {
     
   def typedIdentList(sep: String): Parser[List[(String, Typ)]] =
     rep(typedIdent <~ sep) ~ opt(typedIdent) ^^
+    { case txs~txopt => txs ++ txopt }
+
+  def typedField: Parser[(String, (Mut, Typ))] =
+    opt(mutability) ~ ident ~ typAnn ^^ {
+      case None~f~t => (f, (MVar, t))
+      case Some(m)~f~t => (f, (m, t))
+    }
+  
+  def typedFieldList: Parser[List[(String, (Mut, Typ))]] =
+    rep(typedField <~ ",") ~ opt(typedField) ^^
     { case txs~txopt => txs ++ txopt }
 
   def params: Parser[Params] =

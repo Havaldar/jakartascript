@@ -1,4 +1,4 @@
-package js.hw10
+package js.hw12
 
 import org.kiama.output.PrettyPrinter
 import ast._
@@ -27,7 +27,19 @@ object print extends PrettyPrinter {
   
   def prettyVal(m: Mem, v: Expr): String = {
     (v: @unchecked) match {
-      case a @ Addr(_) if m contains a => prettyVal(m, m(a))
+      case a @ Addr(_) if m contains a => 
+        m(a) match {
+          case v: Val => prettyVal(m, v)
+          case ObjVal(fs) =>
+            val pretty_fields =
+            fs map {
+              case (f, Str(s)) => f + ": '" + s + "'"
+              case (f, v) => f + ": " + prettyVal(m, v)
+            } reduceRight {
+              (s, acc) => s + ",\n  " + acc
+            }
+            "{ %s }".format(pretty_fields)
+        }   
       case _ => prettyVal(v)
     }
   }
@@ -39,6 +51,7 @@ object print extends PrettyPrinter {
     e match {
       case v: Val => 0
       case Var(_) => 0
+      case Obj(_) => 0
       case Print(_) | Call(_, _) => 1
       case UnOp(_, _) => 2
       case BinOp(bop, _, _) =>
@@ -74,16 +87,36 @@ object print extends PrettyPrinter {
       case TNumber => "Num"
       case TString => "String"
       case TUndefined => "Undefined"
+      case TAny => "Any"
       case TFunction(txs, tret) =>
         parens(ssep(txs map showTyp, comma <> space)) <+> "=>" <+> showTyp(tret)
+      case TObj(tfs) =>
+        val break = tfs.size > 3
+        val sep = if (break) comma <> line else comma <> softline
+        if (break)
+          braces(nest(line <> indent(showFieldList(tfs.toList, sep)) <> line))
+        else braces(nest(empty <+> showFieldList(tfs.toList, sep) <+> empty))
     }
     
+  def showFieldList(txs: List[(String, (Mut, Typ))], sep: Doc): Doc =
+    ssep(txs map { case (x, (m, t)) => showTId((x, (Some(m), t))) }, sep)
+    
+  
   def showTIdList(txs: Params, sep: Doc = (comma <> space)): Doc = 
-    ssep(txs map showTId, sep)
-        
-  def showTId(tid: (String, Typ)): Doc = {
-    tid._1 <> colon <+> showTyp(tid._2)
+    ssep(txs map { case (x, t) => showTId((x, (None, t))) }, sep)
+    
+  def showMut(m: Mut): Doc = m match {
+    case MConst => "const"
+    case MVar => "var"
   }
+      
+  def showTId(tid: (String, (Option[Mut], Typ))): Doc =
+    tid match {
+      case (x, (None, t)) =>
+        x <> colon <+> showTyp(t)
+      case (x, (Some(m), t)) =>
+        showMut(m) <+> x <> colon <+> showTyp(t)
+    }
 
   
   /*
@@ -91,14 +124,11 @@ object print extends PrettyPrinter {
    */
   def showJS(e: Expr): Doc = {
     def showDecl(m: Mut, x: String, e1: Expr): Doc = {
-      val mut = m match {
-        case MConst => "const"
-        case MVar => "var"
-      }
+      val mut = showMut(m)
       mut <+> x <+> "=" <+> 
       nest(showJS(e1)) <> semi <> line 
     }
-    
+
     e match {
       case Undefined => "undefined"
       case Num(d) => value(d)
@@ -107,12 +137,13 @@ object print extends PrettyPrinter {
       case Addr(a) => "@a"
       case Var(x) => x
       case eu @ UnOp(uop, e) =>
-        val op: Doc = uop match {
-          case UMinus => "-"
-          case Not => "!"
-          case Deref => "*"
+        val op: Doc => Doc = uop match {
+          case UMinus => "-" <+> _
+          case Not => "!" <+> _
+          case Deref => "*" <+> _
+          case FldDeref(f) => _ <> "." <> f
         }
-        op <+> (if (prec(e) < prec(eu)) showJS(e) else parens(showJS(e)))
+        op(if (prec(e) < prec(eu)) showJS(e) else parens(showJS(e)))
       case BinOp(bop, e1, e2) => {
         val op: Doc = bop match {
           case Plus => " + "
@@ -166,7 +197,19 @@ object print extends PrettyPrinter {
         val rtyp = tann map (":" <+> showTyp(_)) getOrElse empty
         "function" <+> name <> 
           params <> rtyp <+> braces(nest(showReturn(e)) <> line)
-    }  
+      case Obj(fs) =>
+        val hasFun = fs exists { case (_, (_, e)) => hasFunction(e) }
+        val sep =
+          if (hasFun) comma <> line
+          else comma <+> softline
+        val fields = fs map {
+          case (f, (mut, e)) => showMut(mut) <+> f <> colon <+> nest(showJS(e))
+        } reduceOption {
+          (f1, f2) => f1 <> sep <> f2
+        } getOrElse empty
+        if (hasFun) braces(nest(nest(line <> fields) <> line))
+        else braces(empty <+> nest(fields) <+> empty)  
+    }
   }
   
   def prettyAST(x: Any): String = pretty(any(x))

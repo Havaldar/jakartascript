@@ -1,6 +1,6 @@
 package js.util
 
-sealed class State[S, R](run: S => (S,R)) {
+sealed class State[S, +R](run: S => (S,R)) {
   def apply(s: S): (S, R) = run(s)
 
   def map[P](f: R => P): State[S,P] = 
